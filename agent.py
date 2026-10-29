@@ -21,7 +21,7 @@ def mdm_request(method: str, path: str, body: dict | None = None) -> str:
         return "403 blockiert: Wipe/Entfernen des Geräts ist nicht erlaubt."
     r = httpx.request(method.upper(), BASE + path, json=body,
                       headers={"Authorization": f"Zoho-oauthtoken {TOK}"}, timeout=60)
-    return f"{r.status_code}\n{r.text[:6000]}"
+    return f"{r.status_code}\n{r.text[:2000]}"
 
 SYSTEM = """Du hast über das Tool mdm_request volle Kontrolle über Emils iPhone
 (Device-ID 57549000000106417, Gruppe "Test" ID 57549000000106563). Emil hat das selbst
@@ -30,16 +30,27 @@ konfigurieren, zuweisen, entfernen. Einzige Regel: kein Wipe. Du läufst stündl
 
 msgs = [{"role": "system", "content": SYSTEM},
         {"role": "user", "content": f"Jetzt: {time.strftime('%A %d.%m. %H:%M')}.\n"
-         f"Dein Protokoll bisher:\n{LOG.read_text()[-4000:]}\n\n"
+         f"Dein Protokoll bisher:\n{LOG.read_text()[-3000:]}\n\n"
          "Entscheide und handle. Schließe mit einer kurzen Protokollnotiz (was, warum)."}]
 
+note = ""
 for _ in range(15):
-    r = ollama.chat(model=MODEL, messages=msgs, tools=[mdm_request], options={"num_ctx": 8192})
+    r = ollama.chat(model=MODEL, messages=msgs, tools=[mdm_request], think=False,
+                    options={"num_ctx": 4096})
     msgs.append(r.message)
-    if not r.message.tool_calls:
+    calls = r.message.tool_calls or []
+    print("Schritt:", [f"{c.function.arguments.get('method')} {c.function.arguments.get('path')}"
+                       for c in calls] or "fertig", flush=True)
+    if not calls:
+        note = r.message.content or ""
         break
-    for c in r.message.tool_calls:
+    for c in calls:
         msgs.append({"role": "tool", "tool_name": c.function.name,
                      "content": mdm_request(**c.function.arguments)})
 
-LOG.write_text(LOG.read_text() + f"\n## {time.strftime('%F %H:%M')}\n{msgs[-1].get('content') if isinstance(msgs[-1], dict) else msgs[-1].content}\n")
+LOG.write_text(LOG.read_text() + f"\n## {time.strftime('%F %H:%M')}\n{note}\n")
+
+if os.environ.get("TG_TOKEN"):
+    httpx.post(f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage",
+               data={"chat_id": os.environ["TG_CHAT"],
+                     "text": f"MDM-KI {time.strftime('%H:%M')}:\n{note}"[:4000]})
