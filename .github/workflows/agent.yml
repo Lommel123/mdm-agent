@@ -1,0 +1,32 @@
+name: mdm-agent
+on:
+  schedule: [{cron: "17 * * * *"}]
+  workflow_dispatch:
+concurrency: agent
+env:
+  MODEL: huihui_ai/qwen3-abliterated:8b
+  TZONE: Europe/Berlin
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with: {path: ~/.ollama/models, key: "model-${{ env.MODEL }}"}
+      - uses: actions/cache/restore@v4
+        with: {path: state, key: "state-${{ github.run_id }}", restore-keys: "state-"}
+      - run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          sudo systemctl stop ollama || true
+          (ollama serve > /dev/null 2>&1 &) ; sleep 5
+          ollama pull "$MODEL" > /dev/null
+          pip install -q ollama httpx
+      - run: python agent.py
+        env:
+          ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+      - uses: actions/cache/save@v4
+        if: always()
+        with: {path: state, key: "state-${{ github.run_id }}"}
