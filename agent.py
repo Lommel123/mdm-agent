@@ -54,6 +54,7 @@ msgs = [{"role": "system", "content": SYSTEM},
          "Prüfe den aktuellen Zustand, entscheide und handle. "
          "Schließe mit einer kurzen Protokollnotiz: was gesperrt/freigegeben ist und warum."}]
 
+done = []
 note = ""
 for _ in range(20):
     r = ollama.chat(model=MODEL, messages=msgs, tools=[mdm_request], think=False,
