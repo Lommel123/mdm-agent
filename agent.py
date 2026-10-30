@@ -14,7 +14,7 @@ TOK = httpx.post("https://accounts.zoho.eu/oauth/v2/token", data={
 BLOCK = ("wipe", "erase", "unmanage", "deprovision")
 
 def mdm_request(method: str, path: str, body: dict | None = None) -> str:
-    """Aufruf der ManageEngine MDM REST-API. path relativ zu /api/v1/mdm, z.B. GET /devices."""
+    """Aufruf der ManageEngine MDM REST-API. Argumente: method, path (relativ zu /api/v1/mdm), body (JSON-Objekt)."""
     s = (path + json.dumps(body or {})).lower()
     if any(b in s for b in BLOCK) or (method.upper() == "DELETE" and path.startswith("/devices")):
         return "403 blockiert: Wipe/Entfernen des Geräts ist nicht erlaubt."
@@ -26,6 +26,7 @@ SYSTEM = """Du verwaltest über das Tool mdm_request Emils iPhone (DEVICE=575490
 GRUPPE=57549000000106563). Emil hat das selbst eingerichtet. ZIEL: Begrenze Emils Bildschirmzeit.
 Du entscheidest selbst, was wann gesperrt oder freigegeben wird (z.B. nachts strenger,
 Social Media und Spiele zeitweise sperren). Einzige Regel: kein Wipe. Du läufst stündlich.
+Das Tool hat genau drei Argumente: method, path, body.
 
 API-REZEPTE (Pfade relativ, method + path + body):
 Apps sperren:
@@ -44,7 +45,7 @@ Systemsperren per Profil:
  3. POST /profiles/PROFILE_ID/publish
  4. Zuweisen:  POST   /groups/57549000000106563/profiles {"profile_ids":[PROFILE_ID]}
  5. Entziehen: DELETE /groups/57549000000106563/profiles {"profile_ids":[PROFILE_ID]}
- Vorhandene Profile: GET /profiles
+ Vorhandene Profile: GET /profiles  (nutze vorhandene Profile wieder, statt jedes Mal neue zu erstellen)
 Lass allow_host_pairing immer true (sonst kann Emil nicht mehr entwickeln)."""
 
 msgs = [{"role": "system", "content": SYSTEM},
@@ -59,19 +60,30 @@ for _ in range(20):
                     options={"num_ctx": 8192})
     msgs.append(r.message)
     calls = r.message.tool_calls or []
-    print("Schritt:", [f"{c.function.arguments.get('method')} {c.function.arguments.get('path')}"
-                       for c in calls] or "fertig", flush=True)
     if not calls:
         note = r.message.content or ""
+        print("Schritt: fertig", flush=True)
         break
     for c in calls:
-        msgs.append({"role": "tool", "tool_name": c.function.name,
-                     "content": mdm_request(**c.function.arguments)})
+        a = dict(c.function.arguments or {})
+        body = next((a[k] for k in ("body", "jsonPayload", "payload", "data", "json") if k in a), None)
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except Exception:
+                body = None
+        method, path = a.get("method", "GET"), a.get("path", "/")
+        try:
+            out = mdm_request(method, path, body)
+        except Exception as e:
+            out = f"Fehler beim Aufruf: {e}. Nutze genau: method, path, body."
+        print(f"Schritt: {method} {path} {json.dumps(body) if body else ''} -> {out.splitlines()[0]}", flush=True)
+        msgs.append({"role": "tool", "tool_name": c.function.name, "content": out})
 
+print("NOTIZ:", note, flush=True)
 LOG.write_text(LOG.read_text() + f"\n## {time.strftime('%F %H:%M')}\n{note}\n")
 
 if os.environ.get("TG_TOKEN"):
     httpx.post(f"https://api.telegram.org/bot{os.environ['TG_TOKEN']}/sendMessage",
                data={"chat_id": os.environ["TG_CHAT"],
                      "text": f"MDM-KI {time.strftime('%H:%M')}:\n{note}"[:4000]})
-    
