@@ -6,22 +6,28 @@ concurrency: agent
 env:
   MODEL: huihui_ai/qwen3-abliterated:8b
   TZONE: Europe/Berlin
+  OLLAMA_MODELS: /home/runner/.ollama/models
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: {path: ~/.ollama/models, key: "model-${{ env.MODEL }}"}
+        with: {path: /home/runner/.ollama/models, key: "model-${{ env.MODEL }}"}
       - uses: actions/cache/restore@v4
         with: {path: state, key: "state-${{ github.run_id }}", restore-keys: "state-"}
-      - run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          sudo systemctl stop ollama || true
-          (ollama serve > /dev/null 2>&1 &) ; sleep 5
-          ollama list | grep -q "${MODEL%%:*}" || ollama pull "$MODEL" > /dev/null          pip install -q ollama httpx
-      - run: python agent.py
+      - name: Ollama starten
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh > /dev/null 2>&1
+          sudo systemctl stop ollama 2>/dev/null || true
+          sudo pkill ollama 2>/dev/null || true
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 30); do curl -s localhost:11434 > /dev/null && break; sleep 1; done
+          ollama pull "$MODEL" > /dev/null
+          pip install -q ollama httpx
+      - name: Agent
+        run: python agent.py
         env:
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
